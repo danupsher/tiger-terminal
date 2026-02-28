@@ -31,7 +31,7 @@ Built with Python 3.13 and Tk, Tiger Terminal brings a usable, feature-rich term
 
 ## Screenshots
 
-*Coming soon*
+![Tiger Terminal running on iMac G5](screenshot.png)
 
 ## Building from Source
 

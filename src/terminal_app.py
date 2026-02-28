@@ -19,6 +19,16 @@ from screen import Screen
 from renderer import CanvasRenderer
 
 
+def _sanitize_title(title):
+    """Strip characters Monaco can't render from window/tab titles."""
+    out = []
+    for ch in title:
+        cp = ord(ch)
+        if 0x20 <= cp <= 0x7E or 0xA0 <= cp <= 0xFF:
+            out.append(ch)
+    return ''.join(out)
+
+
 def _setup_mac_app():
     """Register as a foreground GUI app (only needed when run from CLI)."""
     if os.environ.get('TIGERTERM_BUNDLE'):
@@ -100,6 +110,13 @@ class TerminalTab:
         canvas.bind('<MouseWheel>', self._on_mousewheel)
         canvas.bind('<Button-4>', self._on_scroll_up)
         canvas.bind('<Button-5>', self._on_scroll_down)
+        # Right-click context menu (Button-2 on Mac Aqua, Button-3 elsewhere)
+        canvas.bind('<Button-2>', self._on_right_click)
+        canvas.bind('<Button-3>', self._on_right_click)
+        canvas.bind('<Control-Button-1>', self._on_right_click)
+
+        # Title tracking
+        self._last_title = ''
 
         # Start PTY
         self.shell.start()
@@ -154,10 +171,16 @@ class TerminalTab:
 
         # Parse all chunks
         for data in chunks:
-            self.parser.feed(data)
+            try:
+                self.parser.feed(data)
+            except Exception:
+                pass
 
         # Render
-        self.renderer.render()
+        try:
+            self.renderer.render()
+        except Exception:
+            pass
 
     def _schedule_render_timer(self):
         """Fallback 33ms timer to ensure rendering."""
@@ -169,6 +192,11 @@ class TerminalTab:
         if not self.shell.is_alive:
             self.app.close_tab(self)
             return
+        # Check if title changed
+        title = self.screen.title
+        if title != self._last_title:
+            self._last_title = title
+            self.app.on_tab_title_changed(self)
         self._render_timer = self.frame.after(33, self._render_tick)
 
     # ── Keyboard input ──
@@ -356,6 +384,26 @@ class TerminalTab:
             return
         self.renderer.scroll_down(3)
 
+    # ── Right-click context menu ──
+
+    def _on_right_click(self, event):
+        menu = tk.Menu(self.frame, tearoff=0)
+        menu.add_command(label='Copy', command=lambda: self.app.copy_selection(self))
+        menu.add_command(label='Paste', command=lambda: self.app.paste(self))
+        menu.add_separator()
+        menu.add_command(label='Clear Scrollback',
+                         command=lambda: self._clear_scrollback())
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        except Exception:
+            pass
+        return 'break'
+
+    def _clear_scrollback(self):
+        self.screen.scrollback = []
+        self.renderer.snap_to_bottom()
+        self.renderer.render()
+
     # ── Resize ──
 
     def resize_grid(self, cols, rows):
@@ -502,15 +550,34 @@ class TigerTerminal:
             is_active = (tab is self.active_tab)
             bg = TAB_SEL if is_active else TAB_BG
             fg_color = FG if is_active else OVERLAY
-            label = ' {} '.format(i + 1)
+            tab_title = tab.screen.title
+            if tab_title:
+                tab_title = _sanitize_title(tab_title)
+                short = tab_title if len(tab_title) <= 20 else tab_title[:18] + '..'
+                label = ' {}: {} '.format(i + 1, short)
+            else:
+                label = ' {} '.format(i + 1)
 
-            btn = tk.Label(
-                self._tab_bar, text=label, bg=bg, fg=fg_color,
-                font=(FONT_FAMILY, 11), padx=8, cursor='hand2'
+            frame = tk.Frame(self._tab_bar, bg=bg)
+            frame.pack(side='left', padx=(2, 0), pady=2)
+
+            lbl = tk.Label(
+                frame, text=label, bg=bg, fg=fg_color,
+                font=(FONT_FAMILY, 11), cursor='hand2'
             )
-            btn.pack(side='left', padx=(2, 0), pady=2)
-            btn.bind('<Button-1>', lambda e, t=tab: self._activate_tab(t))
-            self._tab_buttons.append(btn)
+            lbl.pack(side='left')
+            lbl.bind('<Button-1>', lambda e, t=tab: self._activate_tab(t))
+
+            close_btn = tk.Label(
+                frame, text='x', bg=bg, fg=OVERLAY,
+                font=(FONT_FAMILY, 9), cursor='hand2', padx=2
+            )
+            close_btn.pack(side='left')
+            close_btn.bind('<Button-1>', lambda e, t=tab: self.close_tab(t))
+            close_btn.bind('<Enter>', lambda e, w=close_btn: w.configure(fg=FG))
+            close_btn.bind('<Leave>', lambda e, w=close_btn: w.configure(fg=OVERLAY))
+
+            self._tab_buttons.append(frame)
 
     def new_tab(self):
         # Calculate cols/rows from content area
@@ -559,6 +626,22 @@ class TigerTerminal:
         self.root.bind('<Key>', tab._on_key)
         self.root.bind('<KeyPress>', tab._on_key)
         self._refresh_tab_bar()
+        # Update window title
+        title = tab.screen.title
+        if title:
+            self.root.title(_sanitize_title(title))
+        else:
+            self.root.title('Tiger Terminal')
+
+    def on_tab_title_changed(self, tab):
+        """Update tab bar and window title when a tab's title changes."""
+        self._refresh_tab_bar()
+        if tab is self.active_tab:
+            title = tab.screen.title
+            if title:
+                self.root.title(_sanitize_title(title))
+            else:
+                self.root.title('Tiger Terminal')
 
     def switch_tab(self, idx):
         if 0 <= idx < len(self.tabs):

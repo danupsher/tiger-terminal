@@ -419,11 +419,13 @@ class Screen:
         elif code == 2004:  # bracketed paste
             self.bracketed_paste = on
         elif code == 2026:  # synchronized output
+
             self.sync_output = on
 
     # ── Alt screen ──
 
     def _enter_alt_screen(self, clear=True):
+
         if self._in_alt:
             return
         self._in_alt = True
@@ -442,6 +444,7 @@ class Screen:
         self._mark_all_dirty()
 
     def _leave_alt_screen(self):
+
         if not self._in_alt:
             return
         self._in_alt = False
@@ -575,6 +578,7 @@ class Screen:
     # ── Erase ──
 
     def _erase_display(self, mode):
+
         if mode == 0:  # below cursor
             # Clear rest of current line
             for c in range(self.cx, self.cols):

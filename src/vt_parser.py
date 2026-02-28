@@ -20,7 +20,7 @@ class VTParser:
         self.state = GROUND
         self._params = ''
         self._intermediate = ''
-        self._osc_data = ''
+        self._osc_data = bytearray()
         self._private = ''
         # UTF-8 decode state
         self._utf8_buf = bytearray()
@@ -34,8 +34,8 @@ class VTParser:
             self._process_byte(byte)
 
     def _process_byte(self, b):
-        # Handle UTF-8 continuation bytes in any state
-        if self._utf8_remaining > 0:
+        # Handle UTF-8 continuation bytes (only in GROUND state)
+        if self._utf8_remaining > 0 and self.state == GROUND:
             if 0x80 <= b <= 0xBF:
                 self._utf8_buf.append(b)
                 self._utf8_remaining -= 1
@@ -52,13 +52,19 @@ class VTParser:
                 self._utf8_buf.clear()
                 self._utf8_remaining = 0
 
-        # C0 controls that act everywhere (except in OSC/DCS)
-        if b == 0x1B:  # ESC
+        # ESC is handled specially: dispatch OSC/DCS first if active
+        if b == 0x1B:
+            if self.state == OSC_STRING:
+                self._osc_finish()
+            elif self.state == DCS_PASSTHROUGH:
+                pass  # DCS has no dispatch
             self.state = ESCAPE
             self._params = ''
             self._intermediate = ''
             self._private = ''
             return
+
+        # C0 controls (except in OSC/DCS where bytes are data)
         if self.state != OSC_STRING and self.state != DCS_PASSTHROUGH:
             if b == 0x07:  # BEL
                 self.screen.execute(b)
@@ -124,14 +130,14 @@ class VTParser:
             return
         if b == 0x5D:  # ]  → OSC
             self.state = OSC_STRING
-            self._osc_data = ''
+            self._osc_data = bytearray()
             return
         if b == 0x50:  # P  → DCS
             self.state = DCS_PASSTHROUGH
             return
         if b == 0x58 or b == 0x5E or b == 0x5F:  # X, ^, _ — ignored strings
             self.state = OSC_STRING  # consume until ST
-            self._osc_data = ''
+            self._osc_data = bytearray()
             return
         if 0x20 <= b <= 0x2F:  # intermediate
             self._intermediate = chr(b)
@@ -200,23 +206,24 @@ class VTParser:
                         params.append(0)
         self.screen.csi_dispatch(params, self._intermediate, final, self._private)
 
+    def _osc_finish(self):
+        """Decode accumulated OSC bytes as UTF-8 and dispatch."""
+        try:
+            data = bytes(self._osc_data).decode('utf-8')
+        except UnicodeDecodeError:
+            data = bytes(self._osc_data).decode('latin-1')
+        self.screen.osc_dispatch(data)
+
     def _osc_string(self, b):
         if b == 0x07:  # BEL terminates OSC
-            self.screen.osc_dispatch(self._osc_data)
+            self._osc_finish()
             self.state = GROUND
             return
-        if b == 0x1B:  # ESC — might be ST (ESC \)
-            # Peek: we'll handle \ in next byte
-            self.state = GROUND  # simplified: treat ESC as terminator
-            self.screen.osc_dispatch(self._osc_data)
-            return
-        if b == 0x9C:  # ST
-            self.screen.osc_dispatch(self._osc_data)
-            self.state = GROUND
-            return
-        self._osc_data += chr(b)
+        # In UTF-8 mode, do NOT treat 0x9C as ST — it's a valid
+        # continuation byte in multi-byte sequences.
+        # ESC-based ST (\e\\) is handled in _process_byte.
+        self._osc_data.append(b)
 
     def _dcs_passthrough(self, b):
-        if b == 0x1B or b == 0x9C:  # ESC or ST
-            self.state = GROUND
-            return
+        # ESC terminator handled in _process_byte
+        self.state = GROUND

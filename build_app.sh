@@ -110,9 +110,9 @@ cat > "${CONTENTS}/Info.plist" << 'PLIST'
     <key>CFBundleIdentifier</key>
     <string>com.tiger.terminal</string>
     <key>CFBundleVersion</key>
-    <string>2.0</string>
+    <string>2.1</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.0</string>
+    <string>2.1</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleSignature</key>

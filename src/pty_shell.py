@@ -32,6 +32,8 @@ class PTYShell:
         env['COLORTERM'] = 'truecolor'
         env['COLUMNS'] = str(self.cols)
         env['LINES'] = str(self.rows)
+        env['LANG'] = 'en_US.UTF-8'
+        env['LC_ALL'] = 'en_US.UTF-8'
 
         pid, master_fd = pty.fork()
         if pid == 0:
